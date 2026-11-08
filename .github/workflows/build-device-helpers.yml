@@ -28,7 +28,7 @@ jobs:
           set -euo pipefail
           for helper in credential.ios driver.ios trigger.ios; do
             test -x "credential-retrieval/build/bundle/$helper"
-            lipo -verify_arch arm64 "credential-retrieval/build/bundle/$helper"
+            lipo "credential-retrieval/build/bundle/$helper" -verify_arch arm64
           done
           test -s credential-retrieval/build/bundle/static-key-table.bin
           test -s credential-retrieval/build/bundle/core4-word-table.bin
