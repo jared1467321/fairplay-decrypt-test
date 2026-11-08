@@ -10,6 +10,7 @@ credential-retrieval/*/*.ios
 runs/
 
 credential*.bin
+credentials/
 *.sidb
 *.sinf
 uid*.bin

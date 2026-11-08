@@ -1,8 +1,9 @@
-"""Transfer and run the device credential retriever over USB SSH."""
+"""Transfer and run the device credential retriever over direct or USB SSH."""
 
 from __future__ import annotations
 
 import atexit
+import os
 import re
 import secrets
 import shlex
@@ -13,35 +14,65 @@ from pathlib import Path
 
 
 class SSHDevice:
-    def __init__(self, port: int, udid: str):
+    def __init__(
+        self,
+        port: int,
+        udid: str | None,
+        *,
+        host: str | None = None,
+        user: str = "root",
+        identity: Path | None = None,
+        password_env: str | None = None,
+    ):
         if not 1 <= port <= 65535:
             raise ValueError("SSH port is out of range")
+        if host is not None and (
+            not host or host.startswith("-") or any(ch.isspace() for ch in host)
+        ):
+            raise ValueError("invalid SSH host")
+        self.env = None
+        if password_env is not None:
+            password = os.environ.get(password_env)
+            if not password:
+                raise ValueError(
+                    f"SSH password environment variable is empty or unset: {password_env}"
+                )
+            self.env = dict(os.environ, SSHPASS=password)
         self.tunnel = None
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=1):
-                pass
-        except OSError:
-            self.tunnel = subprocess.Popen(
-                ["iproxy", "-u", udid, f"{port}:22"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            atexit.register(self.close)
-            for _ in range(30):
-                if self.tunnel.poll() is not None:
-                    raise RuntimeError("USB SSH tunnel exited before opening")
-                try:
-                    with socket.create_connection(("127.0.0.1", port), timeout=1):
-                        break
-                except OSError:
-                    time.sleep(0.1)
-            else:
-                raise RuntimeError("USB SSH tunnel did not open")
+        if host is None:
+            if udid is None:
+                raise ValueError("a device UDID is required for USB SSH")
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=1):
+                    pass
+            except OSError:
+                self.tunnel = subprocess.Popen(
+                    ["iproxy", "-u", udid, f"{port}:22"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                atexit.register(self.close)
+                for _ in range(30):
+                    if self.tunnel.poll() is not None:
+                        raise RuntimeError("USB SSH tunnel exited before opening")
+                    try:
+                        with socket.create_connection(("127.0.0.1", port), timeout=1):
+                            break
+                    except OSError:
+                        time.sleep(0.1)
+                else:
+                    raise RuntimeError("USB SSH tunnel did not open")
         self.command = [
             "ssh",
             "-q",
             "-o",
-            "BatchMode=yes",
+            "BatchMode=no" if password_env else "BatchMode=yes",
+            "-o",
+            "NumberOfPasswordPrompts=1",
+            "-o",
+            "ServerAliveInterval=10",
+            "-o",
+            "ServerAliveCountMax=3",
             "-o",
             # Older OpenSSH versions reject WarnWeakCrypto unless ignored explicitly.
             "IgnoreUnknown=WarnWeakCrypto",
@@ -55,8 +86,12 @@ class SSHDevice:
             "ConnectTimeout=8",
             "-p",
             str(port),
-            "root@127.0.0.1",
         ]
+        if identity is not None:
+            self.command.extend(("-i", str(identity)))
+        self.command.extend(("-l", user, "--", host or "127.0.0.1"))
+        if password_env is not None:
+            self.command = ["sshpass", "-e", *self.command]
         temporary = (
             self.run("if command -v jbroot >/dev/null 2>&1; then jbroot /var/tmp; fi")
             .decode("utf-8")
@@ -80,6 +115,7 @@ class SSHDevice:
             capture_output=True,
             timeout=120,
             check=False,
+            env=self.env,
         )
         if result.returncode:
             message = (result.stdout + result.stderr).decode("utf-8", "replace")

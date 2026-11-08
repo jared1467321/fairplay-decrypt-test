@@ -1,0 +1,46 @@
+name: Build device helpers
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install signing tool
+        run: brew install ldid
+
+      - name: Build iOS ARM64 helpers
+        run: make credential-bundle
+
+      - name: Verify and package bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          for helper in credential.ios driver.ios trigger.ios; do
+            test -x "credential-retrieval/build/bundle/$helper"
+            lipo -verify_arch arm64 "credential-retrieval/build/bundle/$helper"
+          done
+          test -s credential-retrieval/build/bundle/static-key-table.bin
+          test -s credential-retrieval/build/bundle/core4-word-table.bin
+          tar -czf fairplay-device-helpers-arm64.tar.gz -C credential-retrieval/build bundle
+          shasum -a 256 fairplay-device-helpers-arm64.tar.gz > fairplay-device-helpers-arm64.tar.gz.sha256
+
+      - name: Upload helper bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fairplay-device-helpers-arm64
+          path: |
+            fairplay-device-helpers-arm64.tar.gz
+            fairplay-device-helpers-arm64.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 30

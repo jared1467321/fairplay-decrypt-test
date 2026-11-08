@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Decrypt an authorized IPA using a 16-byte credential."""
+"""Decrypt an authorized IPA using an explicit credential or region."""
 
 from __future__ import annotations
 
 import argparse
 import copy
 import os
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -15,6 +16,12 @@ from core import arm64_encryption_infos, decrypt_binary
 
 ROOT = Path(__file__).resolve().parent
 COPY_BUFSIZE = 64 * 1024
+
+
+def region_code(value: str) -> str:
+    if not re.fullmatch(r"[A-Za-z]{2}", value):
+        raise argparse.ArgumentTypeError("region must be a two-letter code, such as us")
+    return value.lower()
 
 
 def supf_paths(names: set[str]) -> list[str]:
@@ -58,20 +65,47 @@ def main() -> None:
     parser.add_argument(
         "output", type=Path, help="decrypted IPA output; must not exist"
     )
-    parser.add_argument(
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument(
         "--credential",
         type=Path,
-        default=ROOT / "credential.bin",
         help="saved 16-byte credential",
     )
+    selection.add_argument(
+        "--region", type=region_code, help="select the saved credential for this region"
+    )
+    parser.add_argument(
+        "--credentials-dir",
+        type=Path,
+        help="region credential store (default: ./credentials beside this script)",
+    )
+    parser.add_argument(
+        "--credential-type",
+        choices=("appstore", "arcade"),
+        help="region credential type (default: appstore)",
+    )
     args = parser.parse_args()
-    if not args.ipa.is_file() or not args.credential.is_file():
-        parser.error("input IPA or credential file missing")
+    if (
+        args.credentials_dir is not None or args.credential_type is not None
+    ) and not args.region:
+        parser.error("--credentials-dir and --credential-type require --region")
+    credential_path = args.credential or ROOT / "credential.bin"
+    if args.region:
+        credential_path = (
+            (args.credentials_dir or ROOT / "credentials")
+            / args.region
+            / (args.credential_type or "appstore")
+            / "credential.bin"
+        )
+    if not args.ipa.is_file():
+        parser.error("input IPA file missing")
+    if not credential_path.is_file():
+        parser.error(f"credential file missing: {credential_path}")
     if args.output.exists():
         parser.error("output already exists; never overwrite it")
     if args.output.resolve() == args.ipa.resolve():
         parser.error("input and output must differ")
-    credential = args.credential.read_bytes()
+    credential = credential_path.read_bytes()
     if len(credential) != 16:
         parser.error("credential must contain exactly 16 bytes")
     with ZipFile(args.ipa) as archive:

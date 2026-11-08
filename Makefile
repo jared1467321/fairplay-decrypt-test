@@ -1,11 +1,14 @@
 .DEFAULT_GOAL := all
 
-PY_FILES := core.py decrypt.py credential-retrieval/retrieve.py credential-retrieval/native_ssh.py
+PY_FILES := core.py decrypt.py credential-retrieval/retrieve.py credential-retrieval/native_ssh.py $(wildcard tests/test_*.py)
 RUFF := uvx --from ruff==0.14.3 ruff
 BLACK := uvx --from black==26.10.1 black
 MYPY := uvx --from mypy==2.4.0 --with-requirements requirements.txt mypy
 
-.PHONY: all credential-bundle lint lint-ruff lint-black lint-mypy format
+.PHONY: all credential-bundle lint lint-ruff lint-black lint-mypy format test
+
+test:
+	python3 -m unittest discover -s tests -v
 
 all:
 ifeq ($(shell uname -s),Darwin)

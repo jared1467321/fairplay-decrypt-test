@@ -1,4 +1,4 @@
-"""Run the native credential retriever on a jailbroken device over USB SSH."""
+"""Run the native credential retriever over direct SSH (including Tailscale) or USB."""
 
 from __future__ import annotations
 
@@ -275,7 +275,10 @@ def observe_uid_layer(
     )
     command = " ".join(map(shlex.quote, arguments))
     observer = subprocess.Popen(
-        device.command + [command], stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        device.command + [command],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=device.env,
     )
     trigger_process = None
     direct_process = None
@@ -296,6 +299,7 @@ def observe_uid_layer(
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            env=device.env,
         )
         trigger_output, trigger_errors = trigger_process.communicate(timeout=15)
         if trigger_process.returncode:
@@ -315,6 +319,7 @@ def observe_uid_layer(
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
+                    env=device.env,
                 )
         output_bytes, errors = observer.communicate(timeout=100)
         if observer.returncode:
@@ -354,30 +359,70 @@ def main() -> None:
     parser.add_argument(
         "--output-dir", type=Path, help="new directory for credential.bin"
     )
-    parser.add_argument("--device-udid", help="connected device UDID")
     parser.add_argument(
-        "--ssh-port", type=int, default=2222, help="local USB SSH port (default: 2222)"
+        "--device-udid", help="expected device UDID (optional for direct SSH)"
+    )
+    parser.add_argument(
+        "--ssh-host", help="device IP or SSH hostname, including Tailscale; skips USB"
+    )
+    parser.add_argument("--ssh-user", default="root", help="SSH user (default: root)")
+    authentication = parser.add_mutually_exclusive_group()
+    authentication.add_argument("--ssh-key", type=Path, help="SSH private key path")
+    authentication.add_argument(
+        "--ssh-password-env",
+        help="environment variable containing the SSH password (requires sshpass)",
+    )
+    parser.add_argument(
+        "--ssh-port",
+        type=int,
+        help="SSH port (default: 22 with --ssh-host, otherwise 2222)",
     )
     args = parser.parse_args()
     if args.sinf_member and not args.ipa:
         parser.error("--sinf-member requires --ipa")
     if not args.output_dir or args.output_dir.exists():
         parser.error("--output-dir must name a new directory")
+    for name in DEVICE_FILES:
+        if not (args.bundle / name).is_file():
+            parser.error(
+                f"device bundle file missing: {args.bundle / name}; build or download the helper bundle first"
+            )
+    port = (
+        args.ssh_port
+        if args.ssh_port is not None
+        else (22 if args.ssh_host is not None else 2222)
+    )
+    if not 1 <= port <= 65535:
+        parser.error("SSH port is out of range")
     sinf = (
         license_sinf(args.sinf, args.ipa, args.sinf_member)
         if args.sinf or args.ipa
         else None
     )
-    udid = normalize_udid(args.device_udid) if args.device_udid else connected_udid()
-    device = SSHDevice(args.ssh_port, udid)
+    udid = (
+        normalize_udid(args.device_udid)
+        if args.device_udid
+        else (None if args.ssh_host is not None else connected_udid())
+    )
+    device = SSHDevice(
+        port,
+        udid,
+        host=args.ssh_host,
+        user=args.ssh_user,
+        identity=args.ssh_key,
+        password_env=args.ssh_password_env,
+    )
     try:
         for name in DEVICE_FILES:
             device.write(name, args.bundle / name, executable=name.endswith(".ios"))
         program = device.path("credential.ios")
         actual_udid = device.path("device-udid.bin")
         device.run(" ".join(map(shlex.quote, (program, "device-udid", actual_udid))))
-        if device.read(actual_udid) != fairplay_device_id(udid):
-            raise ValueError("SSH tunnel is connected to a different device")
+        actual_identity = device.read(actual_udid)
+        if len(actual_identity) != 20:
+            raise ValueError("device returned an invalid FairPlay identifier")
+        if udid is not None and actual_identity != fairplay_device_id(udid):
+            raise ValueError("SSH is connected to a different device")
         installed_app, executable, installed_sinf = trigger_app(device, sinf)
         selected_sinf = sinf if sinf is not None else installed_sinf
         arcade = sinf_field(selected_sinf, b"key ")[0] == 4
@@ -433,6 +478,10 @@ def main() -> None:
                 )
             )
         credential = device.read(credential_path)
+        if len(credential) != 16:
+            raise ValueError(
+                "device returned an invalid credential; expected exactly 16 bytes"
+            )
     finally:
         device.cleanup()
     os.umask(0o077)
