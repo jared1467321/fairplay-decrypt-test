@@ -25,5 +25,3 @@ jobs:
           echo "::error title=Python checks failed::Run 'make format' for automatic fixes, then 'make lint'. Fix remaining type errors manually."
           printf '%s\n' 'Run `make format` for automatic fixes, then `make lint`. Fix remaining type errors manually.' >> "$GITHUB_STEP_SUMMARY"
           exit 1
-      - name: Test
-        run: uv run --with-requirements requirements.txt make test

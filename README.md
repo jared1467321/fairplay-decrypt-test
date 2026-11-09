@@ -74,5 +74,5 @@ decrypt its encrypted arm64 pages, and clear `cryptid`.
 
 ## Checks
 
-`make lint` runs the pinned Python checks. `make test` runs synthetic IPA and
-mocked SSH/retrieval tests; it does not connect to a device.
+`make lint` runs the pinned Ruff, Black, and mypy checks. GitHub Actions runs
+these checks on pushes and pull requests.
