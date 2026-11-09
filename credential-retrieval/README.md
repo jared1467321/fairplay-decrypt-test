@@ -34,6 +34,11 @@ works with apps from the Apple Account it came from.
 To retrieve an Arcade credential, pass an Arcade IPA with `--ipa` and have
 an Arcade app from that account installed on the device.
 
+Arcade retrieval uses the upstream FairPlay IOKit capture method. Rebuild
+or download the updated helper bundle before using it; the bundle must
+include `arcade-capture.ios`. The older helper can fail with
+`cannot locate FairPlay credential transform` on some iOS builds.
+
 Build on a Mac with Xcode and `ldid`.
 
 ## Direct SSH and Tailscale
@@ -53,8 +58,10 @@ mkdir -p credential-retrieval/build
 tar -xzf fairplay-device-helpers-arm64.tar.gz -C credential-retrieval/build
 ```
 
-The archive preserves executable permissions and contains all five required
-helper/data files. The build does not retrieve or upload any account credentials.
+The archive preserves executable permissions and contains all six required
+helper/data files, including `arcade-capture.ios`. `bundle/SOURCE_COMMIT`
+identifies the source commit used for the build. The build does not retrieve
+or upload any account credentials.
 
 For example, retrieve the US App Store account credential into the region
 store used by `decrypt.py --region us`:
